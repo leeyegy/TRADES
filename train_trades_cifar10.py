@@ -14,6 +14,8 @@ from trades import trades_loss
 import sys
 sys.path.append("../../")
 from networks import *
+from data_generator import get_handled_cifar10_train_loader,get_handled_cifar10_test_loader
+import  time
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR TRADES Adversarial Training')
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
@@ -30,11 +32,11 @@ parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
-parser.add_argument('--epsilon', default=0.031,
+parser.add_argument('--epsilon', default=0.031,type=float,
                     help='perturbation')
-parser.add_argument('--num-steps', default=10,
+parser.add_argument('--num-steps', default=10,type=int,
                     help='perturb number of steps')
-parser.add_argument('--step-size', default=0.007,
+parser.add_argument('--step-size', default=0.007,type=float,
                     help='perturb step size')
 parser.add_argument('--beta', default=6.0,
                     help='regularization, i.e., 1/lambda in TRADES')
@@ -205,8 +207,7 @@ def main():
         model=torch.load(os.path.join(save_dir,"model_%03d.pth"%(initial_epoch)))
         print ("resuming from epoch %d "%initial_epoch)
     else:
-        print("initial_epoch :{}".format(initial_epoch))
-        raise
+        model,_ = getNetwork(args)
     model = model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
@@ -214,14 +215,18 @@ def main():
     train_loader = get_handled_cifar10_train_loader(num_workers=1,shuffle=True,batch_size=args.batch_size)
     test_loader = get_handled_cifar10_test_loader(num_workers=1,shuffle=False,batch_size=args.test_batch_size)
 
+    total_time = 0
 
     for epoch in range(initial_epoch+1, args.epochs + 1):
         # adjust learning rate for SGD
         adjust_learning_rate(optimizer, epoch)
 
         # adversarial training
+        start_time = time.time()
         train(args, model, device, train_loader, optimizer, epoch)
-
+        end_time = time.time()
+        total_time += (end_time-start_time)
+        print("Epoch: {}, total_cost_time by now: {}s".format(epoch,total_time))
         # evaluation on natural examples
         print('================================================================')
         eval_train(model, device, train_loader)
