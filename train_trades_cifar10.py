@@ -11,13 +11,16 @@ from torchvision import datasets, transforms
 from models.wideresnet import *
 from models.resnet import *
 from trades import trades_loss
+import sys
+sys.path.append("../../")
+from networks import *
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR TRADES Adversarial Training')
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                     help='input batch size for training (default: 128)')
 parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
                     help='input batch size for testing (default: 128)')
-parser.add_argument('--epochs', type=int, default=76, metavar='N',
+parser.add_argument('--epochs', type=int, default=120, metavar='N',
                     help='number of epochs to train')
 parser.add_argument('--weight-decay', '--wd', default=2e-4,
                     type=float, metavar='W')
@@ -39,35 +42,42 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                     help='how many batches to wait before logging training status')
-parser.add_argument('--model-dir', default='./model-cifar-wideResNet',
-                    help='directory of model for saving checkpoint')
+# parser.add_argument('--resume_path', default='./model-cifar-wideResNet',
+#                     help='directory of model for saving checkpoint')
 parser.add_argument('--save-freq', '-s', default=1, type=int, metavar='N',
                     help='save frequency')
+
+# net
+parser.add_argument('--net_type', default='wide-resnet', type=str, help='model')
+parser.add_argument('--depth', default=28, type=int, help='depth of model')
+parser.add_argument('--widen_factor', default=10, type=int, help='width of model')
+parser.add_argument('--dropout', default=0.3, type=float, help='dropout_rate')
+parser.add_argument('--num_classes', default=10, type=int)
 
 args = parser.parse_args()
 
 # settings
-model_dir = args.model_dir
-if not os.path.exists(model_dir):
-    os.makedirs(model_dir)
+# model_dir = args.model_dir
+# if not os.path.exists(model_dir):
+#     os.makedirs(model_dir)
 use_cuda = not args.no_cuda and torch.cuda.is_available()
 torch.manual_seed(args.seed)
 device = torch.device("cuda" if use_cuda else "cpu")
-kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+# kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
-# setup data loader
-transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-])
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-])
-trainset = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
-train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, **kwargs)
-testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
-test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False, **kwargs)
+# # setup data loader
+# transform_train = transforms.Compose([
+#     transforms.RandomCrop(32, padding=4),
+#     transforms.RandomHorizontalFlip(),
+#     transforms.ToTensor(),
+# ])
+# transform_test = transforms.Compose([
+#     transforms.ToTensor(),
+# ])
+# trainset = torchvision.datasets.CIFAR10(root='../data', train=True, download=True, transform=transform_train)
+# train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, **kwargs)
+# testset = torchvision.datasets.CIFAR10(root='../data', train=False, download=True, transform=transform_test)
+# test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False, **kwargs)
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -146,13 +156,66 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+# Return network & file name
+def getNetwork(args):
+    if (args.net_type == 'lenet'):
+        net = LeNet(args.num_classes)
+        file_name = 'lenet'
+    elif (args.net_type == 'vggnet'):
+        net = VGG(args.depth, args.num_classes)
+        file_name = 'vgg-'+str(args.depth)
+    elif (args.net_type == 'resnet'):
+        net = ResNet(args.depth, args.num_classes)
+        file_name = 'resnet-'+str(args.depth)
+    elif (args.net_type == 'wide-resnet'):
+        net = Wide_ResNet(args.depth, args.widen_factor, args.dropout, args.num_classes)
+        file_name = 'wide-resnet-'+str(args.depth)+'x'+str(args.widen_factor)
+    else:
+        print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet')
+        sys.exit(0)
+
+    return net, file_name
+
+
+import glob, re
+
+
+def findLastCheckpoint(save_dir):
+    file_list = glob.glob(os.path.join(save_dir, "*model_*.pth"))
+    epoch = []
+    if file_list:
+        for file in file_list:
+            result = re.findall("model_(.*).pth.*" , file)
+            if result:
+                epoch.append(int(result[0]))
+        if epoch:
+            return max(epoch)
+    return 0
 
 def main():
     # init model, ResNet18() can be also used here for training
-    model = WideResNet().to(device)
+    # load model
+    #load net
+    sub_dir = args.net_type+"_"+str(args.depth)
+    save_dir=os.path.join("checkpoint","cifar10",sub_dir)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    initial_epoch=findLastCheckpoint(save_dir)
+    if initial_epoch > 0:
+        model=torch.load(os.path.join(save_dir,"model_%03d.pth"%(initial_epoch)))
+        print ("resuming from epoch %d "%initial_epoch)
+    else:
+        print("initial_epoch :{}".format(initial_epoch))
+        raise
+    model = model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
-    for epoch in range(1, args.epochs + 1):
+    # load data
+    train_loader = get_handled_cifar10_train_loader(num_workers=1,shuffle=True,batch_size=args.batch_size)
+    test_loader = get_handled_cifar10_test_loader(num_workers=1,shuffle=False,batch_size=args.test_batch_size)
+
+
+    for epoch in range(initial_epoch+1, args.epochs + 1):
         # adjust learning rate for SGD
         adjust_learning_rate(optimizer, epoch)
 
@@ -165,12 +228,15 @@ def main():
         eval_test(model, device, test_loader)
         print('================================================================')
 
-        # save checkpoint
-        if epoch % args.save_freq == 0:
-            torch.save(model.state_dict(),
-                       os.path.join(model_dir, 'model-wideres-epoch{}.pt'.format(epoch)))
-            torch.save(optimizer.state_dict(),
-                       os.path.join(model_dir, 'opt-wideres-checkpoint_epoch{}.tar'.format(epoch)))
+        torch.save(model,os.path.join(save_dir,"model_%03d.pth"%(epoch)))
+
+
+        # # save checkpoint
+        # if epoch % args.save_freq == 0:
+        #     torch.save(model.state_dict(),
+        #                os.path.join(model_dir, 'model-wideres-epoch{}.pt'.format(epoch)))
+        #     torch.save(optimizer.state_dict(),
+        #                os.path.join(model_dir, 'opt-wideres-checkpoint_epoch{}.tar'.format(epoch)))
 
 
 if __name__ == '__main__':
